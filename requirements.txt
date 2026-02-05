@@ -1,0 +1,9 @@
+asyncio==4.0.0
+DateTime==6.0
+logging==0.4.9.6
+pyaes==1.6.1
+pyasn1==0.6.2
+pytz==2025.2
+rsa==4.9.1
+Telethon==1.42.0
+zope.interface==8.2
