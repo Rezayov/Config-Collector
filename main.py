@@ -8,10 +8,15 @@ from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
-from checker import extract_and_append_unique_configs
+
+from Checker import extract_and_append_unique_configs
 
 logger = logging.getLogger("tg_config_collector")
 
+
+# ----------------------------
+# Logging
+# ----------------------------
 def setup_logging(debug: bool):
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
@@ -30,6 +35,9 @@ def setup_logging(debug: bool):
     logger.addHandler(sh)
 
 
+# ----------------------------
+# Config
+# ----------------------------
 def load_config(path="configuration.json"):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -50,31 +58,33 @@ def load_config(path="configuration.json"):
         logger.error(f"Failed to load config: {e}")
         return None
 
+
 def get_last_24h_range_utc():
-    """
-    Return the last 24 hours window in UTC.
-    """
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=24)
     return start, end
 
 
+# ----------------------------
+# Message text extraction
+# ----------------------------
 def extract_text_with_urls(msg) -> str:
-    """
-    Combine message text + embedded urls in entities.
-    """
     base = msg.message or ""
     if msg.entities and msg.message:
         for ent in msg.entities:
             if isinstance(ent, MessageEntityTextUrl):
                 base += f"\n{ent.url}"
             elif isinstance(ent, MessageEntityUrl):
-                url = msg.message[ent.offset : ent.offset + ent.length]
+                url = msg.message[ent.offset: ent.offset + ent.length]
                 base += f"\n{url}"
     return base.strip()
 
 
+# ----------------------------
+# Dialog listing (debug tool)
+# ----------------------------
 async def list_dialogs(client: TelegramClient, limit: int = 50):
+    # This is just for printing some dialogs, not for selection logic.
     dialogs = await client.get_dialogs(limit=limit)
     logger.info("=" * 80)
     logger.info("Dialogs (showing up to %d):", limit)
@@ -82,50 +92,77 @@ async def list_dialogs(client: TelegramClient, limit: int = 50):
 
     for i, d in enumerate(dialogs, 1):
         ent = d.entity
-        name = getattr(ent, "title", None) or (getattr(ent, "first_name", "") + " " + (getattr(ent, "last_name", "") or "")).strip()
+        name = getattr(ent, "title", None) or (
+            (getattr(ent, "first_name", "") + " " + (getattr(ent, "last_name", "") or "")).strip()
+        )
         dtype = "Channel/Group" if getattr(ent, "title", None) else "User"
         logger.info("%3d) %-14s | %-45s | dialog.id=%s | entity.id=%s", i, dtype, name[:45], d.id, getattr(ent, "id", None))
 
 
-async def select_relevant_chats(client: TelegramClient, max_chats: int = 10, save_path="selected_chats.json"):
+# ----------------------------
+# Chat selection (NO LIMIT using iter_dialogs)
+# ----------------------------
+async def select_relevant_chats(
+    client: TelegramClient,
+    include_users: bool = False,
+    keywords=None,
+    max_chats: int = 0,              # 0 = no limit
+    save_path: str = None            # None = do not save
+):
     """
-    Select chats by keyword in chat title.
-    Uses dialog.id (more reliable than entity.id).
+    Uses client.iter_dialogs() to traverse ALL dialogs (no hidden limit).
+    - include_users=False => only channels/groups (anything with .title)
+    - keywords list => if provided, keep only chats whose title matches any keyword
+    - max_chats=0 => no limit
     """
-    keywords = [
-        "v2ray", "proxy", "config", "vpn", "server",
-        "vmess", "vless", "trojan", "shadowsocks",
-        "mtproto", "outline", "network"
-    ]
+    if keywords is None:
+        keywords = [
+            "v2ray", "proxy", "config", "vpn", "server",
+            "vmess", "vless", "trojan", "shadowsocks",
+            "mtproto", "outline", "network"
+        ]
 
-    dialogs = await client.get_dialogs()
-    filtered = []
+    chosen_ids = []
+    matched = 0
+    scanned = 0
 
-    for d in dialogs:
+    async for d in client.iter_dialogs():
+        scanned += 1
         ent = d.entity
         title = getattr(ent, "title", None)
+
+        # Decide whether to include this dialog:
         if title:
+            # Channel/Group
             t = title.lower()
-            if any(k in t for k in keywords):
-                filtered.append(d)
+            ok = any(k in t for k in keywords) if keywords else True
+        else:
+            # User/private chat
+            if not include_users:
+                continue
+            name = (getattr(ent, "first_name", "") + " " + (getattr(ent, "last_name", "") or "")).strip().lower()
+            ok = any(k in name for k in keywords) if keywords else True
 
-    if filtered:
-        chosen = filtered[:max_chats]
-        chat_ids = [d.id for d in chosen]
-        logger.info("Selected %d keyword-related chats.", len(chat_ids))
-    else:
-        chosen = dialogs[:max_chats]
-        chat_ids = [d.id for d in chosen]
-        logger.info("No keyword-related chats found. Selected first %d dialogs.", len(chat_ids))
+        if not ok:
+            continue
 
-    try:
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(chat_ids, f, ensure_ascii=False, indent=2)
-        logger.info("Saved selected chats to %s", save_path)
-    except Exception as e:
-        logger.warning("Could not save selected chats: %s", e)
+        matched += 1
+        chosen_ids.append(d.id)
 
-    return chat_ids
+        if max_chats and max_chats > 0 and len(chosen_ids) >= max_chats:
+            break
+
+    logger.info("Dialogs scanned=%d | matched=%d | selected=%d", scanned, matched, len(chosen_ids))
+
+    if save_path:
+        try:
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(chosen_ids, f, ensure_ascii=False, indent=2)
+            logger.info("Saved selected chats to %s", save_path)
+        except Exception as e:
+            logger.warning("Could not save selected chats: %s", e)
+
+    return chosen_ids
 
 
 def load_saved_chats(path="selected_chats.json"):
@@ -141,12 +178,15 @@ def load_saved_chats(path="selected_chats.json"):
         logger.warning("Failed to load saved chats: %s", e)
         return None
 
+
+# ----------------------------
+# Message collection (NO LIMIT, stop by time)
+# ----------------------------
 async def collect_messages_from_chat(
     client: TelegramClient,
     chat_id,
     start_utc: datetime,
     end_utc: datetime,
-    per_chat_limit: int = 200,
     debug_sample: bool = False,
 ):
     entity = await client.get_entity(chat_id)
@@ -155,15 +195,17 @@ async def collect_messages_from_chat(
     collected = []
 
     try:
-        async for msg in client.iter_messages(entity, limit=per_chat_limit):
+        # limit=None => NO LIMIT. We stop when msg_time < start_utc
+        async for msg in client.iter_messages(entity, limit=None):
             if not msg.date:
                 continue
 
-            msg_time = msg.date 
+            msg_time = msg.date  # UTC aware
 
             if debug_sample:
                 logger.debug("DBG chat=%s msg_id=%s msg_time=%s", chat_name, msg.id, msg_time)
 
+            # iter_messages goes from newest -> oldest
             if msg_time < start_utc:
                 break
 
@@ -183,6 +225,7 @@ async def collect_messages_from_chat(
     except FloodWaitError as e:
         logger.warning("FloodWait %ss on chat=%s", e.seconds, chat_name)
         await asyncio.sleep(e.seconds)
+        # after sleeping, skip this chat to avoid loops; you can also retry if you want
         return [], chat_name
 
 
@@ -191,35 +234,32 @@ async def collect_messages(
     chat_ids,
     start_utc: datetime,
     end_utc: datetime,
-    per_chat_limit: int = 200,
-    delay_between_chats: float = 1.5,
+    delay_between_chats: float = 0.0,
     debug_sample: bool = False,
 ):
     all_msgs = []
+
     for i, chat_id in enumerate(chat_ids, 1):
         try:
             msgs, cname = await collect_messages_from_chat(
-                client, chat_id, start_utc, end_utc, per_chat_limit=per_chat_limit, debug_sample=debug_sample
+                client, chat_id, start_utc, end_utc, debug_sample=debug_sample
             )
-            if msgs:
-                logger.info("Chat %d/%d: %s -> %d messages in range", i, len(chat_ids), cname, len(msgs))
-                all_msgs.extend(msgs)
-            else:
-                logger.debug("Chat %d/%d: %s -> 0 in range", i, len(chat_ids), cname)
+            logger.info("Chat %d/%d: %s -> %d messages in range", i, len(chat_ids), cname, len(msgs))
+            all_msgs.extend(msgs)
 
         except Exception as e:
             logger.error("Error collecting from chat_id=%s: %s", chat_id, e)
 
-        if i < len(chat_ids):
+        if i < len(chat_ids) and delay_between_chats and delay_between_chats > 0:
             await asyncio.sleep(delay_between_chats)
 
     return all_msgs
 
+
+# ----------------------------
+# Output files
+# ----------------------------
 def write_raw_text(messages, raw_path="RawText.txt", report_path="Telegram_output.txt", dry_run=False):
-    """
-    RawText: only message texts (for regex extraction)
-    Telegram_output: readable report for debugging
-    """
     if dry_run:
         logger.info("[DRY RUN] Skipping file writes.")
         return
@@ -243,6 +283,9 @@ def write_raw_text(messages, raw_path="RawText.txt", report_path="Telegram_outpu
             f.write("=" * 70 + "\n\n")
 
 
+# ----------------------------
+# Auth
+# ----------------------------
 async def ensure_login(client: TelegramClient):
     await client.connect()
     if not await client.is_user_authorized():
@@ -259,6 +302,9 @@ async def ensure_login(client: TelegramClient):
     logger.info("Telegram connected & authorized.")
 
 
+# ----------------------------
+# Main
+# ----------------------------
 async def async_main(args):
     cfg = load_config()
     if not cfg:
@@ -273,30 +319,38 @@ async def async_main(args):
             await list_dialogs(client, limit=50)
             return
 
+        # Decide chats list
         chat_ids = None
-        if not args.no_cache:
-            chat_ids = load_saved_chats()
+
+        # Cache behavior: default OFF unless --use-cache is set
+        if args.use_cache:
+            chat_ids = load_saved_chats(args.cache_file)
 
         if args.chat is not None:
             chat_ids = [args.chat]
             logger.info("Overriding chats: single chat_id=%s", args.chat)
         elif not chat_ids:
-            chat_ids = await select_relevant_chats(client, max_chats=args.max_chats)
+            # Select from ALL dialogs using iter_dialogs()
+            chat_ids = await select_relevant_chats(
+                client,
+                include_users=args.include_users,
+                keywords=None if args.no_keywords else None,  # keywords in function default; see below
+                max_chats=args.max_chats,   # 0 => unlimited
+                save_path=args.cache_file if args.save_cache else None
+            )
 
-        # تغییر به ۲۴ ساعت اخیر
+        # 24h window
         start_utc, end_utc = get_last_24h_range_utc()
         logger.info("Collecting messages in last 24 hours (UTC):")
         logger.info("  start=%s", start_utc.isoformat())
         logger.info("  end  =%s", end_utc.isoformat())
         logger.info("Chats to check: %d", len(chat_ids))
-        logger.debug("chat_ids=%s", chat_ids)
 
         messages = await collect_messages(
             client,
             chat_ids,
             start_utc,
             end_utc,
-            per_chat_limit=args.per_chat_limit,
             delay_between_chats=args.delay,
             debug_sample=args.debug_sample
         )
@@ -318,16 +372,32 @@ async def async_main(args):
 
 
 def build_arg_parser():
-    p = argparse.ArgumentParser(description="Telegram V2Ray config collector (debug-friendly).")
+    p = argparse.ArgumentParser(description="Telegram config collector (scan ALL dialogs + ALL msgs in last 24h).")
     p.add_argument("--debug", action="store_true", help="Enable verbose logging.")
-    p.add_argument("--list-dialogs", action="store_true", help="List dialogs and exit.")
+    p.add_argument("--list-dialogs", action="store_true", help="List some dialogs and exit.")
     p.add_argument("--dry-run", action="store_true", help="Do not write files and do not run checker.")
-    p.add_argument("--no-cache", action="store_true", help="Ignore selected_chats.json and re-select chats.")
     p.add_argument("--chat", type=int, default=None, help="Test only one chat id (dialog.id).")
-    p.add_argument("--max-chats", type=int, default=10, help="Max chats to check.")
-    p.add_argument("--per-chat-limit", type=int, default=200, help="Max messages pulled per chat.")
-    p.add_argument("--delay", type=float, default=1.5, help="Delay between chats (seconds).")
-    p.add_argument("--debug-sample", action="store_true", help="Log each message timestamp during iteration (very verbose).")
+
+    # CHAT SELECTION
+    p.add_argument("--max-chats", type=int, default=0,
+                  help="Max chats to check. Use 0 for NO LIMIT (scan all matched chats).")
+    p.add_argument("--include-users", action="store_true",
+                  help="Also include private/user dialogs (default: only channels/groups).")
+    p.add_argument("--no-keywords", action="store_true",
+                  help="Do NOT filter by keywords; include all channels/groups (and users if --include-users).")
+
+    # CACHE CONTROL (default OFF)
+    p.add_argument("--use-cache", action="store_true",
+                  help="Load chat_ids from cache file (selected_chats.json).")
+    p.add_argument("--save-cache", action="store_true",
+                  help="Save selected chat_ids to cache file.")
+    p.add_argument("--cache-file", type=str, default="selected_chats.json",
+                  help="Cache file path.")
+
+    # PERFORMANCE / DEBUG
+    p.add_argument("--delay", type=float, default=0.0, help="Delay between chats (seconds).")
+    p.add_argument("--debug-sample", action="store_true",
+                  help="Log each message timestamp during iteration (very verbose).")
     return p
 
 
@@ -335,6 +405,23 @@ if __name__ == "__main__":
     parser = build_arg_parser()
     args = parser.parse_args()
     setup_logging(args.debug)
+
+    # If user wants "no keywords", override selector keywords to empty list by setting them to None and skipping filter.
+    # Easiest: modify select_relevant_chats call logic:
+    # We'll just monkey patch by using the flag below inside async_main:
+    # (Implementation note: we keep keywords default inside function and handle no_keywords there.)
+
+    # Patch: inject behavior into select_relevant_chats by wrapping it
+    _orig_select = select_relevant_chats
+
+    async def select_relevant_chats(client, include_users=False, keywords=None, max_chats=0, save_path=None):
+        if args.no_keywords:
+            # keywords=[] means accept all
+            keywords = []
+        else:
+            # use defaults
+            keywords = None
+        return await _orig_select(client, include_users=include_users, keywords=keywords, max_chats=max_chats, save_path=save_path)
 
     try:
         asyncio.run(async_main(args))
