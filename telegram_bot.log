@@ -1,2 +1,5 @@
 2026-02-10 02:03:23,520 - ERROR - configuration.json not found.
 2026-02-10 02:03:44,777 - ERROR - Failed to load config: 'Missing API_ID in configuration.json'
+2026-02-10 02:04:30,317 - ERROR - Failed to load config: 'Missing API_ID in configuration.json'
+2026-02-10 02:05:09,798 - ERROR - Failed to load config: 'Missing API_HASH in configuration.json'
+2026-02-10 02:05:21,406 - ERROR - Failed to load config: 'Missing SESSION_NAME in configuration.json'

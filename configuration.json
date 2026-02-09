@@ -1,4 +1,5 @@
 {
-  "telegram_api_id": "YOUR_API_ID",
-  "telegram_api_hash": "YOUR_API_HASH"
+  "API_ID": "YOUR_API_ID",
+  "API_HASH": "YOUR_API_HASH",
+  "SESSION_NAME": "YOUR_SESSION_NAME"
 }
