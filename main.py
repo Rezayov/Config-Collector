@@ -9,7 +9,7 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
 
-from Checker import extract_and_append_unique_configs
+from checker import extract_and_append_unique_configs , remove_duplicate_configs
 
 logger = logging.getLogger("tg_config_collector")
 
@@ -302,9 +302,6 @@ async def ensure_login(client: TelegramClient):
     logger.info("Telegram connected & authorized.")
 
 
-# ----------------------------
-# Main
-# ----------------------------
 async def async_main(args):
     cfg = load_config()
     if not cfg:
@@ -319,10 +316,8 @@ async def async_main(args):
             await list_dialogs(client, limit=50)
             return
 
-        # Decide chats list
         chat_ids = None
 
-        # Cache behavior: default OFF unless --use-cache is set
         if args.use_cache:
             chat_ids = load_saved_chats(args.cache_file)
 
@@ -330,7 +325,6 @@ async def async_main(args):
             chat_ids = [args.chat]
             logger.info("Overriding chats: single chat_id=%s", args.chat)
         elif not chat_ids:
-            # Select from ALL dialogs using iter_dialogs()
             chat_ids = await select_relevant_chats(
                 client,
                 include_users=args.include_users,
@@ -360,11 +354,13 @@ async def async_main(args):
         write_raw_text(messages, raw_path="RawText.txt", report_path="Telegram_output.txt", dry_run=args.dry_run)
 
         if args.dry_run:
-            logger.info("[DRY RUN] Skipping checker.")
+            logger.info("[DRY RUN] Skipping .")
             return
 
         new_count, total = extract_and_append_unique_configs("RawText.txt", "Final_Configs.txt")
         logger.info("Checker done. New configs added=%d | Total unique=%d", new_count, total)
+        remove_duplicate_configs("Final_Configs.txt","Configs.txt")
+        
 
     finally:
         await client.disconnect()

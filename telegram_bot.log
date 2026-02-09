@@ -1,0 +1,2 @@
+2026-02-10 02:03:23,520 - ERROR - configuration.json not found.
+2026-02-10 02:03:44,777 - ERROR - Failed to load config: 'Missing API_ID in configuration.json'
