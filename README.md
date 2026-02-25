@@ -36,8 +36,8 @@ A small, debug-friendly Python tool that scans your Telegram dialogs for the **l
 ### 1) Clone & create a virtual environment
 
 ```bash
-git clone <YOUR_REPO_URL>
-cd <YOUR_PROJECT_FOLDER>
+git clone <(https://github.com/Rezayov/Config-Collector.git)>
+cd <Config-Collector>
 
 python -m venv .venv
 source .venv/bin/activate   # macOS/Linux
