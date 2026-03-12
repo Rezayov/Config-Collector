@@ -1,4 +1,4 @@
-# Telegram Config Collector
+# Telegram Config Collector with Built-in Proxy Tester
 
 A fully asynchronous Telegram scraper built with **Telethon** that:
 
@@ -6,7 +6,7 @@ A fully asynchronous Telegram scraper built with **Telethon** that:
 * Collects messages from the last 24 hours (UTC)
 * Extracts VPN configuration links (`vless://`, `trojan://`, `ss://`)
 * Deduplicates them
-* Saves clean, unique configs to a final output file
+* **Optionally tests each proxy** using real clients (Xray, shadowsocks, trojan) and saves only working ones
 
 Designed for high-volume scanning with no hidden limits.
 
@@ -23,6 +23,8 @@ Designed for high-volume scanning with no hidden limits.
 * ✅ Duplicate config removal
 * ✅ Dry-run mode for safe testing
 * ✅ Debug mode for deep inspection
+* ✅ **Proxy testing** (optional) – runs each config through real clients and verifies connectivity via HTTP request
+* ✅ Outputs a clean list of **working proxies** only
 
 ---
 
@@ -32,11 +34,13 @@ Designed for high-volume scanning with no hidden limits.
 .
 ├── Main.py
 ├── Checker.py
+├── tester.py                # new proxy testing module
 ├── configuration.json
-├── selected_chats.json (optional cache)
+├── selected_chats.json      (optional cache)
 ├── RawText.txt
 ├── Final_Configs.txt
 ├── Configs.txt
+├── Working_Configs.txt       # new – only proxies that passed the test
 └── telegram_bot.log
 ```
 
@@ -47,11 +51,51 @@ Designed for high-volume scanning with no hidden limits.
 * Python 3.9+
 * Telegram API credentials
 * Telethon
+* **For proxy testing only**: 
+  * Python libraries: `aiohttp`, `aiohttp-socks`
+  * External clients: `xray` (or `v2ray`), `shadowsocks-libev`, `trojan`
 
-Install dependencies:
+Install Python dependencies:
 
 ```bash
-pip install telethon
+pip install telethon aiohttp aiohttp-socks
+```
+
+---
+
+# 🔧 Installing External Clients (for Proxy Testing)
+
+The tester uses real proxy clients to verify connectivity. Install them according to your OS.
+
+## macOS (Homebrew)
+
+```bash
+brew install xray shadowsocks-libev trojan
+```
+
+## Ubuntu/Debian
+
+```bash
+# Xray
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+
+# Shadowsocks-libev
+sudo apt update && sudo apt install shadowsocks-libev
+
+# Trojan (optional, can use Xray instead)
+sudo apt install trojan
+```
+
+## Windows
+
+Recommend using **WSL2** with Ubuntu. Alternatively, download binaries manually and place them in your PATH.
+
+After installation, verify each command is available:
+
+```bash
+xray version
+ss-local --help
+trojan --version
 ```
 
 ---
@@ -180,17 +224,41 @@ Then:
 
 ---
 
+## 5️⃣ Proxy Testing (Optional)
+
+If you run with `--test-proxies`, the script will:
+
+* Launch `tester.py` as a subprocess
+* `tester.py` parses each config from `Configs.txt`
+* For each config, it:
+  * Generates a temporary client configuration file (for Xray, ss-local, or trojan)
+  * Starts the client locally on a random port
+  * Waits for it to be ready
+  * Sends an HTTP request through the SOCKS5 proxy to `http://httpbin.org/ip`
+  * If the request succeeds and returns a valid IP, the config is marked as working
+* All working configs are saved to **`Working_Configs.txt`**
+
+The tester is fully asynchronous, runs multiple tests concurrently (default 5), and respects timeouts.
+
+---
+
 # ▶️ Usage
 
-## Basic Run
+## Basic Run (Collect Only)
 
 ```bash
 python Main.py
 ```
 
-Scans all matched chats, collects last 24h messages, extracts configs.
+Scans all matched chats, collects last 24h messages, extracts configs, and saves to `Configs.txt`.
 
----
+## Collect + Test Proxies
+
+```bash
+python Main.py --test-proxies
+```
+
+After collection, tests all configs and writes only working ones to `Working_Configs.txt`.
 
 ## Debug Mode
 
@@ -200,8 +268,6 @@ python Main.py --debug
 
 Enables verbose logging.
 
----
-
 ## List Dialogs
 
 ```bash
@@ -209,8 +275,6 @@ python Main.py --list-dialogs
 ```
 
 Shows first 50 dialogs and exits.
-
----
 
 ## Check Only One Chat
 
@@ -220,8 +284,6 @@ python Main.py --chat 123456789
 
 Useful for testing.
 
----
-
 ## Remove Keyword Filtering
 
 ```bash
@@ -230,23 +292,17 @@ python Main.py --no-keywords
 
 Scans ALL channels/groups.
 
----
-
 ## Include Private Chats
 
 ```bash
 python Main.py --include-users
 ```
 
----
-
 ## Limit Number of Chats
 
 ```bash
 python Main.py --max-chats 20
 ```
-
----
 
 ## Enable Chat Cache
 
@@ -268,8 +324,6 @@ Custom cache file:
 python Main.py --cache-file my_chats.json
 ```
 
----
-
 ## Add Delay Between Chats
 
 Useful to avoid rate limits:
@@ -280,8 +334,6 @@ python Main.py --delay 2
 
 Adds 2 seconds between chat scans.
 
----
-
 ## Dry Run (Safe Mode)
 
 ```bash
@@ -291,8 +343,6 @@ python Main.py --dry-run
 * No files written
 * Checker not executed
 * Only logs
-
----
 
 ## Debug Message Sampling
 
@@ -306,13 +356,14 @@ Logs timestamp of every processed message (very verbose).
 
 # 📊 Output Files
 
-| File                | Description                |
-| ------------------- | -------------------------- |
-| RawText.txt         | Raw collected messages     |
-| Telegram_output.txt | Detailed report            |
-| Final_Configs.txt   | Appended unique configs    |
-| Configs.txt         | Clean deduplicated configs |
-| telegram_bot.log    | Log file                   |
+| File                | Description                          |
+|---------------------|--------------------------------------|
+| RawText.txt         | Raw collected messages               |
+| Telegram_output.txt | Detailed report                      |
+| Final_Configs.txt   | Appended unique configs               |
+| Configs.txt         | Clean deduplicated configs            |
+| Working_Configs.txt | **Only proxies that passed the test** |
+| telegram_bot.log    | Log file                             |
 
 ---
 
@@ -339,9 +390,11 @@ If scanning hundreds of chats, consider:
 --delay 1
 ```
 
+For testing, concurrency is limited to 5 to avoid overloading your system and the remote servers. You can adjust this in `tester.py` (variable `CONCURRENT_TESTS`).
+
 ---
 
-# 🔍 Example Flow
+# 🔍 Example Flow (with Testing)
 
 ```
 Scan dialogs → Filter chats → 
@@ -349,7 +402,9 @@ Collect last 24h messages →
 Write raw text → 
 Extract configs → 
 Remove duplicates → 
-Save final output
+Save final output → 
+Test each proxy → 
+Save working configs
 ```
 
 ---
@@ -363,19 +418,21 @@ Save final output
   * API_HASH
   * Session files
 
+* Proxy testing runs local clients – no data leaves your machine except the test HTTP request through the proxy.
+
 ---
 
 # 🧩 Extending the Project
 
 You can easily extend it to:
 
-* Add `vmess://` extraction
+* Add `vmess://` extraction (already supported in tester but not in checker? Checker regex only covers vless, trojan, ss. You can extend regex.)
 * Add database storage
 * Add automatic scheduler (cron)
 * Deploy to VPS
-* Integrate proxy checker
-* Add Telegram bot output channel
+* Add Telegram bot to receive working configs
 * Build dashboard UI
+* Add more sophisticated proxy testing (speed, latency, region)
 
 ---
 
@@ -387,7 +444,13 @@ Start safe:
 python Main.py --chat <some_id> --dry-run --debug
 ```
 
-Then scale gradually.
+Then test with a small set:
+
+```
+python Main.py --max-chats 5 --test-proxies
+```
+
+Finally run full scan.
 
 ---
 
@@ -398,6 +461,7 @@ This script is built for:
 * High-volume Telegram scraping
 * VPN config aggregation
 * Automated collection workflows
+* **Reliable proxy validation** using real clients
 
 It uses:
 
@@ -405,10 +469,11 @@ It uses:
 * Full dialog traversal
 * Full message traversal
 * Time-based stopping condition
+* Real proxy testing with industry-standard tools
 
 If you scale it seriously, consider:
 
-* Proxy rotation
+* Proxy rotation for Telegram API
 * Multi-account sharding
 * Persistent database storage
-
+* Distributed testing (multiple machines)
