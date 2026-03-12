@@ -1,19 +1,20 @@
-# Telegram Config Collector with Built-in Proxy Tester
+# Telegram Config Collector with Advanced Proxy Tester
 
 A fully asynchronous Telegram scraper built with **Telethon** that:
 
 * Scans all your Telegram dialogs (channels, groups, optionally private chats)
 * Collects messages from the last 24 hours (UTC)
-* Extracts VPN configuration links (`vless://`, `trojan://`, `ss://`)
+* Extracts VPN configuration links (`vless://`, `trojan://`, `ss://`, `vmess://`)
 * Deduplicates them
-* **Optionally tests each proxy** using real clients (Xray, shadowsocks, trojan) and saves only working ones
+* **Optionally tests each proxy** using real clients (Xray, shadowsocks-libev) and saves only working ones
 
-Designed for high-volume scanning with no hidden limits.
+Designed for high-volume scanning with no hidden limits, and an **optimized proxy tester** that handles all modern protocols with advanced features, detailed logging, and concurrency control.
 
 ---
 
 ## 🚀 Features
 
+### Telegram Collector
 * ✅ Scans **ALL dialogs** using `iter_dialogs()` (no built-in limits)
 * ✅ Collects **ALL messages in last 24h** using `iter_messages(limit=None)`
 * ✅ Keyword-based chat filtering (vpn, proxy, config, v2ray, etc.)
@@ -23,8 +24,19 @@ Designed for high-volume scanning with no hidden limits.
 * ✅ Duplicate config removal
 * ✅ Dry-run mode for safe testing
 * ✅ Debug mode for deep inspection
-* ✅ **Proxy testing** (optional) – runs each config through real clients and verifies connectivity via HTTP request
-* ✅ Outputs a clean list of **working proxies** only
+
+### Advanced Proxy Tester
+* ✅ **Supports all major protocols**: VLESS, VMESS, Trojan, Shadowsocks
+* ✅ **Full URL parsing** with support for SIP002, VMess JSON, and standard link formats
+* ✅ **Network transport handling**: TCP, WebSocket, gRPC, HTTPUpgrade, XHTTP, SplitHTTP, H2, KCP, QUIC
+* ✅ **Security profiles**: TLS, REALITY, and none
+* ✅ **Multiple test URLs** with fallback (https/http endpoints)
+* ✅ **SOCKS5 readiness check** before sending requests
+* ✅ **Configurable concurrency, timeouts, and per‑proxy timeouts**
+* ✅ **Per‑proxy log files** for debugging failed connections
+* ✅ **Real‑time progress reporting** with failure reason statistics
+* ✅ **Detailed JSON output** with success/failure reasons
+* ✅ **`--all` flag** to print full test results (including failures)
 
 ---
 
@@ -34,13 +46,14 @@ Designed for high-volume scanning with no hidden limits.
 .
 ├── Main.py
 ├── Checker.py
-├── tester.py                # new proxy testing module
+├── tester.py                # advanced proxy tester
 ├── configuration.json
 ├── selected_chats.json      (optional cache)
 ├── RawText.txt
 ├── Final_Configs.txt
 ├── Configs.txt
-├── Working_Configs.txt       # new – only proxies that passed the test
+├── Working_Configs.txt      # only proxies that passed the test
+├── proxy_logs/              # per‑proxy logs (created by tester)
 └── telegram_bot.log
 ```
 
@@ -53,7 +66,7 @@ Designed for high-volume scanning with no hidden limits.
 * Telethon
 * **For proxy testing only**: 
   * Python libraries: `aiohttp`, `aiohttp-socks`
-  * External clients: `xray` (or `v2ray`), `shadowsocks-libev`, `trojan`
+  * External clients: `xray` (or `v2ray`), `shadowsocks-libev`
 
 Install Python dependencies:
 
@@ -65,12 +78,12 @@ pip install telethon aiohttp aiohttp-socks
 
 # 🔧 Installing External Clients (for Proxy Testing)
 
-The tester uses real proxy clients to verify connectivity. Install them according to your OS.
+The tester uses **Xray** for VLESS/VMESS/Trojan and **ss-local** (from shadowsocks-libev) for Shadowsocks. Install them according to your OS.
 
 ## macOS (Homebrew)
 
 ```bash
-brew install xray shadowsocks-libev trojan
+brew install xray shadowsocks-libev
 ```
 
 ## Ubuntu/Debian
@@ -81,9 +94,6 @@ bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release
 
 # Shadowsocks-libev
 sudo apt update && sudo apt install shadowsocks-libev
-
-# Trojan (optional, can use Xray instead)
-sudo apt install trojan
 ```
 
 ## Windows
@@ -95,7 +105,6 @@ After installation, verify each command is available:
 ```bash
 xray version
 ss-local --help
-trojan --version
 ```
 
 ---
@@ -137,7 +146,7 @@ Example:
 
 # 🧠 How It Works
 
-## 1️⃣ Chat Selection
+## 1️⃣ Chat Selection (Main.py)
 
 The script:
 
@@ -166,7 +175,7 @@ You can:
 
 ---
 
-## 2️⃣ Message Collection
+## 2️⃣ Message Collection (Main.py)
 
 For each selected chat:
 
@@ -182,7 +191,7 @@ All timestamps handled in **UTC**.
 
 ---
 
-## 3️⃣ Raw Output
+## 3️⃣ Raw Output (Main.py)
 
 Messages are written to:
 
@@ -202,7 +211,7 @@ Full report including:
 
 ---
 
-## 4️⃣ Config Extraction
+## 4️⃣ Config Extraction (Checker.py)
 
 In `Checker.py`, this regex is used:
 
@@ -222,23 +231,23 @@ Then:
 * Removes duplicates
 * Saves clean result to `Configs.txt`
 
+> **Note**: VMESS links are also extracted because they appear as `vmess://` in messages, but the regex can be extended if needed. The tester itself fully supports VMESS.
+
 ---
 
-## 5️⃣ Proxy Testing (Optional)
+## 5️⃣ Proxy Testing (tester.py)
 
-If you run with `--test-proxies`, the script will:
+If you run `Main.py` with `--test-proxies`, or run `tester.py` directly, the following happens:
 
-* Launch `tester.py` as a subprocess
-* `tester.py` parses each config from `Configs.txt`
-* For each config, it:
-  * Generates a temporary client configuration file (for Xray, ss-local, or trojan)
-  * Starts the client locally on a random port
-  * Waits for it to be ready
-  * Sends an HTTP request through the SOCKS5 proxy to `http://httpbin.org/ip`
-  * If the request succeeds and returns a valid IP, the config is marked as working
-* All working configs are saved to **`Working_Configs.txt`**
+* **Parsing**: Each config is parsed according to its protocol using robust, protocol‑specific parsers (supports SIP002 for Shadowsocks, VMess JSON, and standard URL formats).
+* **Configuration Generation**: For VLESS/VMESS/Trojan, an Xray-compatible JSON config is built with correct `streamSettings` (TLS, REALITY, network transport). For Shadowsocks, an `ss-local` JSON config is generated.
+* **Local Client Launch**: The appropriate client (`xray` or `ss-local`) is started with the generated config, binding to a random free port on `127.0.0.1`. All client output (stdout/stderr) is saved to a per‑proxy log file in `proxy_logs/` for later inspection.
+* **Readiness Check**: The script repeatedly attempts to open a TCP connection to the SOCKS5 port until it succeeds or times out.
+* **HTTP Test**: Once ready, a SOCKS5 connector is used to send a request to multiple test URLs (e.g., `https://api.ipify.org`, `http://httpbin.org/ip`). If any URL returns a successful response containing an expected key (`ip` or `origin`), the proxy is marked as working.
+* **Per‑Proxy Timeout**: Each test is limited by `PER_PROXY_TIMEOUT` (default 25s) to avoid hanging.
+* **Cleanup**: The client is terminated and the temporary config file is deleted.
 
-The tester is fully asynchronous, runs multiple tests concurrently (default 5), and respects timeouts.
+The tester runs **concurrently** (default 20 tests at once), provides real‑time progress updates, and at the end prints a summary of failure reasons.
 
 ---
 
@@ -258,99 +267,64 @@ Scans all matched chats, collects last 24h messages, extracts configs, and saves
 python Main.py --test-proxies
 ```
 
-After collection, tests all configs and writes only working ones to `Working_Configs.txt`.
+After collection, runs the tester on `Configs.txt` and writes working configs to `Working_Configs.txt`.
 
-## Debug Mode
+## Run Tester Directly
 
-```bash
-python Main.py --debug
-```
-
-Enables verbose logging.
-
-## List Dialogs
+If you already have a file with configs (e.g., `my_configs.txt`), you can test them directly:
 
 ```bash
-python Main.py --list-dialogs
+python tester.py -f my_configs.txt
 ```
 
-Shows first 50 dialogs and exits.
-
-## Check Only One Chat
+By default, only working configs are printed to stdout (one per line). You can redirect them to a file:
 
 ```bash
-python Main.py --chat 123456789
+python tester.py -f my_configs.txt > working.txt
 ```
 
-Useful for testing.
+### Tester Command‑Line Options
 
-## Remove Keyword Filtering
+| Option | Description |
+|--------|-------------|
+| `-f FILE`, `--file FILE` | Read proxy URLs from FILE (one per line). If omitted, reads from stdin. |
+| `--all` | Print full results for **all** proxies (including failures), with reason and log file path. |
+| `--log-dir DIR` | Directory to store per‑proxy log files (default: `proxy_logs/`). |
+
+### Tester Environment Variables
+
+Set `PROXY_TEST_LOGLEVEL` to control logging verbosity (e.g., `DEBUG`, `INFO`):
 
 ```bash
-python Main.py --no-keywords
+export PROXY_TEST_LOGLEVEL=DEBUG
+python tester.py -f Configs.txt
 ```
 
-Scans ALL channels/groups.
+### Tester Output Examples
 
-## Include Private Chats
-
-```bash
-python Main.py --include-users
+**Default (only working):**
+```
+vless://...
+trojan://...
+ss://...
 ```
 
-## Limit Number of Chats
+**With `--all`:**
+```
+[OK] [vless] vless://...
+  reason: ok via https://api.ipify.org?format=json
+  elapsed: 2.34s
+  log_file: proxy_logs/00001_vless_abc123.log
 
-```bash
-python Main.py --max-chats 20
+[FAIL] [ss] ss://...
+  reason: all test urls failed
+  elapsed: 10.12s
+  log_file: proxy_logs/00002_ss_def456.log
 ```
 
-## Enable Chat Cache
+### Analyzing Logs
 
-Save selected chats:
-
-```bash
-python Main.py --save-cache
-```
-
-Use saved chats:
-
-```bash
-python Main.py --use-cache
-```
-
-Custom cache file:
-
-```bash
-python Main.py --cache-file my_chats.json
-```
-
-## Add Delay Between Chats
-
-Useful to avoid rate limits:
-
-```bash
-python Main.py --delay 2
-```
-
-Adds 2 seconds between chat scans.
-
-## Dry Run (Safe Mode)
-
-```bash
-python Main.py --dry-run
-```
-
-* No files written
-* Checker not executed
-* Only logs
-
-## Debug Message Sampling
-
-```bash
-python Main.py --debug-sample
-```
-
-Logs timestamp of every processed message (very verbose).
+When a proxy fails, the client’s output is saved to a log file in `proxy_logs/` (e.g., `proxy_logs/00042_trojan_xyz789.log`). You can examine these logs to diagnose the cause (e.g., TLS errors, handshake failures, etc.).
 
 ---
 
@@ -363,11 +337,37 @@ Logs timestamp of every processed message (very verbose).
 | Final_Configs.txt   | Appended unique configs               |
 | Configs.txt         | Clean deduplicated configs            |
 | Working_Configs.txt | **Only proxies that passed the test** |
-| telegram_bot.log    | Log file                             |
+| telegram_bot.log    | Log file from Main.py                 |
+| proxy_logs/         | Per‑proxy logs from tester            |
 
 ---
 
-# 🛡 FloodWait Handling
+# 🔧 Tester Configuration (Inside tester.py)
+
+You can adjust the following constants at the top of `tester.py`:
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `CONCURRENT_TESTS` | 20 | Maximum parallel tests. |
+| `TEST_TIMEOUT` | 10 | Timeout for each HTTP request (seconds). |
+| `STARTUP_TIMEOUT` | 8 | How long to wait for the local SOCKS port to become ready (seconds). |
+| `PER_PROXY_TIMEOUT` | 25 | Total timeout for one proxy (including startup and HTTP test). |
+| `PROGRESS_INTERVAL` | 5 | Seconds between progress reports. |
+
+---
+
+# 🔍 Tester Supported Protocols & Transports
+
+| Protocol  | Networks Supported                                                                 | Security         |
+|-----------|------------------------------------------------------------------------------------|------------------|
+| VLESS     | tcp, ws, grpc, httpupgrade, xhttp, splithttp, h2, kcp, quic                       | none, tls, reality |
+| VMESS     | tcp, ws, grpc, httpupgrade, xhttp, splithttp, h2, kcp, quic                       | none, tls, reality |
+| Trojan    | tcp, ws, grpc, httpupgrade, xhttp, splithttp, h2, kcp, quic                       | tls, reality      |
+| Shadowsocks| tcp only (via `ss-local`)                                                        | encryption methods|
+
+---
+
+# 🛡 FloodWait Handling (Main.py)
 
 If Telegram rate-limits:
 
@@ -380,7 +380,7 @@ If Telegram rate-limits:
 # ⚡ Performance Notes
 
 * Uses async/await everywhere
-* No message limit
+* No message limit in collection
 * Stops iteration early by time condition
 * Scales well to large dialog lists
 
@@ -390,7 +390,7 @@ If scanning hundreds of chats, consider:
 --delay 1
 ```
 
-For testing, concurrency is limited to 5 to avoid overloading your system and the remote servers. You can adjust this in `tester.py` (variable `CONCURRENT_TESTS`).
+For testing, concurrency defaults to 20, which is a good balance between speed and system load.
 
 ---
 
@@ -403,7 +403,7 @@ Write raw text →
 Extract configs → 
 Remove duplicates → 
 Save final output → 
-Test each proxy → 
+Test each proxy (tester.py) → 
 Save working configs
 ```
 
@@ -426,7 +426,6 @@ Save working configs
 
 You can easily extend it to:
 
-* Add `vmess://` extraction (already supported in tester but not in checker? Checker regex only covers vless, trojan, ss. You can extend regex.)
 * Add database storage
 * Add automatic scheduler (cron)
 * Deploy to VPS
@@ -434,23 +433,29 @@ You can easily extend it to:
 * Build dashboard UI
 * Add more sophisticated proxy testing (speed, latency, region)
 
+The tester’s modular design allows easy addition of new protocols or custom test logic.
+
 ---
 
 # 🧪 Testing Strategy
 
 Start safe:
 
-```
+```bash
 python Main.py --chat <some_id> --dry-run --debug
 ```
 
 Then test with a small set:
 
-```
+```bash
 python Main.py --max-chats 5 --test-proxies
 ```
 
-Finally run full scan.
+Finally run full scan:
+
+```bash
+python Main.py --test-proxies
+```
 
 ---
 
@@ -461,7 +466,7 @@ This script is built for:
 * High-volume Telegram scraping
 * VPN config aggregation
 * Automated collection workflows
-* **Reliable proxy validation** using real clients
+* **Reliable proxy validation** using real clients and realistic network simulation
 
 It uses:
 
@@ -470,6 +475,8 @@ It uses:
 * Full message traversal
 * Time-based stopping condition
 * Real proxy testing with industry-standard tools
+* Advanced protocol support (including REALITY, gRPC, WebSocket, etc.)
+* Detailed logging and diagnostics
 
 If you scale it seriously, consider:
 
@@ -477,3 +484,7 @@ If you scale it seriously, consider:
 * Multi-account sharding
 * Persistent database storage
 * Distributed testing (multiple machines)
+
+---
+
+**Happy collecting and testing!** 🚀
